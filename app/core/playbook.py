@@ -88,8 +88,23 @@ class Playbook:
     def selected_shop(self) -> list[TargetShop]:
         return [item for item in self.shop if item.selected]
 
+    def jobs_enabled(self) -> bool:
+        return bool(self.features.get("Jobs"))
+
+    def family_enabled(self) -> bool:
+        return bool(self.features.get("Family"))
+
     def shop_enabled(self) -> bool:
         return bool(self.features.get("Shop"))
+
+    def bank_enabled(self) -> bool:
+        return bool(self.features.get("Bank"))
+
+    def want_withdraw(self) -> bool:
+        return self.bank_enabled() and bool(self.withdraw_all)
+
+    def want_deposit(self) -> bool:
+        return self.bank_enabled() and bool(self.deposit_all)
 
     def to_dict(self) -> dict:
         return {

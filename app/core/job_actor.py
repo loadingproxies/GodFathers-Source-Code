@@ -26,6 +26,9 @@ from app.core.jobs import (
 from app.core.labels import labels_match
 from app.core.ocr_engine import OCRWord
 
+JOB_RECLICK_SECONDS = 1.6
+JOB_RUN_GREY_SECONDS = 3.0
+
 
 class JobActor:
     def __init__(self) -> None:
@@ -38,6 +41,9 @@ class JobActor:
         self._last_city = ""
         self._seek_dir = 0
         self.out_of_energy = False
+        self._wait_cycle = False
+        self._saw_unready = False
+        self._last_idle_log = 0.0
 
     def halt(self) -> None:
         self._halt = True
@@ -54,6 +60,19 @@ class JobActor:
         self._last_city = ""
         self._seek_dir = 0
         self.out_of_energy = False
+        self._wait_cycle = False
+        self._saw_unready = False
+        self._last_idle_log = 0.0
+
+    def arm_after_break(self) -> None:
+        self._wait_cycle = False
+        self._saw_unready = False
+
+    def _idle(self, activity, reason: str) -> None:
+        if time.time() - self._last_idle_log < 4.0:
+            return
+        self._last_idle_log = time.time()
+        activity(reason)
 
     def _aborted(self) -> bool:
         return self._halt or self._paused
@@ -70,7 +89,7 @@ class JobActor:
         self.out_of_energy = False
         if self._aborted() or not wanted or frame is None or info is None:
             return False
-        if time.time() - self._last_click < 0.25:
+        if time.time() - self._last_click < JOB_RECLICK_SECONDS:
             return False
         words = self._list_words(engine, frame)
         texts = [word.text for word in words]
@@ -104,7 +123,7 @@ class JobActor:
 
         if self._click_visible(info, frame, words, wanted, energy, activity):
             return True
-        if self.out_of_energy:
+        if self.out_of_energy or self._wait_cycle:
             return False
         if self._matching_row(words, frame, wanted) is not None:
             activity("Job name is on screen — waiting for gold DO JOB, not moving the list")
@@ -155,13 +174,24 @@ class JobActor:
             return False
         job, target = found
         if target.energy and energy is not None and energy < int(target.energy):
-            activity(f"{target.name}: no energy ({energy}/{target.energy})")
+            self._wait_cycle = True
+            self._saw_unready = True
             self.out_of_energy = True
+            self._idle(activity, f"{target.name}: idle — waiting for job energy or stamina")
             return False
         gold = find_do_job_button(frame, job.y or 0, job.height or 24)
         if gold is None:
-            activity(f"{target.name}: DO JOB grey, no energy")
+            self._saw_unready = True
+            if self._last_click and time.time() - self._last_click < JOB_RUN_GREY_SECONDS:
+                self._wait_cycle = True
+                self._idle(activity, f"{target.name}: idle — job running, waiting for it to free or for stamina")
+                return False
+            self._wait_cycle = True
             self.out_of_energy = True
+            self._idle(activity, f"{target.name}: idle — waiting for job energy or stamina")
+            return False
+        if self._wait_cycle and not self._saw_unready:
+            self._idle(activity, f"{target.name}: idle — waiting for job energy or stamina")
             return False
         cx, cy = gold
         x = info.left + cx
@@ -180,6 +210,8 @@ class JobActor:
             return False
         self._last_click = time.time()
         self._scrolls = 0
+        self._wait_cycle = True
+        self._saw_unready = False
         return True
 
     def _click_jobs_tab(self, engine, info, frame, activity) -> bool:

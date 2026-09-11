@@ -1,4 +1,4 @@
-"""Open SHOP and click cash BUY for ticked items. Gold BUY is never pressed."""
+"""Open SHOP, click cash ALL, then click lit gold/green BUY. Never grey LEVEL."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from app.core.jobs import shift_words
 from app.core.labels import label_key, labels_match
 from app.core.ocr_engine import OCRWord
 from app.core.shop import (
+    BUY_COL,
     CASH_COL,
     ROBUX_COL,
     can_afford,
@@ -17,6 +18,7 @@ from app.core.shop import (
     catalog_price,
     equipment_all_click,
     find_equipment_all,
+    find_lit_cash_buys,
     find_row_cash_buy,
     has_shop_list_words,
     parse_shop_rows,
@@ -35,6 +37,7 @@ class ShopActor:
         self._opened = False
         self._section = "All"
         self._clicked: set[str] = set()
+        self._clicked_ys: set[int] = set()
         self._misses: dict[str, int] = {}
         self._pending = ""
         self._cash_before: int | None = None
@@ -61,6 +64,7 @@ class ShopActor:
         self._opened = False
         self._section = "All"
         self._clicked = set()
+        self._clicked_ys = set()
         self._misses = {}
         self._pending = ""
         self._cash_before = None
@@ -102,9 +106,12 @@ class ShopActor:
 
         words = self._list_words(engine, frame)
         texts = [word.text for word in words]
-        self.restock_left = parse_stock_timer(texts)
+        self._fresh_stock(parse_stock_timer(texts), activity)
         rows = [row for row in parse_shop_rows(words, frame, section="All") if not row.gold]
         if not rows:
+            if cash is not None and cash > 0 and self._click_lit_buy(info, frame, activity, cash):
+                self._ocr_miss = 0
+                return True
             return self._empty_list(activity)
         self._ocr_miss = 0
 
@@ -134,23 +141,24 @@ class ShopActor:
         for price, row in priced:
             gold = find_row_cash_buy(frame, words, row.y or 0, row.height or 24)
             if gold is None:
-                activity(f"{row.name}: no gold BUY (LEVEL lock or grey)")
+                activity(f"{row.name}: no gold BUY on this row (LEVEL lock or grey)")
                 continue
             cx, cy = gold
             x = info.left + cx
             y = info.top + cy
-            if is_roblox_chrome(info, x, y) or cx < int(frame.shape[1] * 0.48) or cx >= int(frame.shape[1] * ROBUX_COL):
+            if is_roblox_chrome(info, x, y) or cx < int(frame.shape[1] * BUY_COL) or cx >= int(frame.shape[1] * ROBUX_COL):
                 activity(f"{row.name}: skip — that BUY is Robux Shop, not cash")
                 continue
             if self._aborted() or not focus_window(info.hwnd):
                 return False
             tag = row.cash_text or ("lit BUY" if price >= 10**14 else f"${int(price):,}")
-            activity(f"Clicking gold BUY: {row.name} ({tag}) at {x},{y}")
+            activity(f"Clicking lit BUY: {row.name} ({tag}) at {x},{y}")
             if not click_at(info, x, y):
                 activity("BUY click failed")
                 return False
             key = label_key(row.name)
             self._clicked.add(key)
+            self._clicked_ys.add(int(cy / 28))
             self._pending = key
             self._cash_before = cash
             self._pending_price = None if price >= 10**14 else int(price)
@@ -158,8 +166,11 @@ class ShopActor:
             self._sleep(0.12)
             return True
 
+        if buy_all and self._click_lit_buy(info, frame, activity, cash):
+            return True
+
         shown = ", ".join(row.name for row in rows[:4])
-        looking = "affordable gold BUY on ALL" if buy_all else "ticked shop items you can afford"
+        looking = "affordable lit BUY on ALL" if buy_all else "ticked shop items you can afford"
         activity(f"Looking for {looking}. Visible: {shown or 'none'}. Moving the list.")
         view = "|".join(label_key(row.name) for row in rows[:6])
         if view and view == self._last_view:
@@ -169,6 +180,9 @@ class ShopActor:
             self._last_view = view
         self._seek(info, activity)
         if self._stuck >= 3:
+            self._clicked_ys.clear()
+            if buy_all and self._click_lit_buy(info, frame, activity, cash):
+                return True
             if not self._second_pass:
                 self._second_pass = True
                 self._went_top = False
@@ -180,18 +194,25 @@ class ShopActor:
             activity("Shop pass finished — no more affordable gold BUY on this stock")
         return False
 
+    def _fresh_stock(self, timer: int | None, activity) -> None:
+        if timer is not None and self.restock_left is not None and timer > self.restock_left + 20:
+            self._clicked.clear()
+            self._clicked_ys.clear()
+            self._second_pass = False
+            self._stuck = 0
+            self.pass_done = False
+            activity("New shop stock — buying gold BUY again")
+        self.restock_left = timer
+
     def _empty_list(self, activity) -> bool:
         self._ocr_miss += 1
-        if self._ocr_miss < 5:
+        if self._ocr_miss < 3:
             activity("Waiting for shop list OCR")
-            return False
-        if self._reopens >= 2:
-            self.pass_done = True
-            activity("SHOP list still not read — moving on")
             return False
         self._reopens += 1
         self._opened = False
         self._ocr_miss = 0
+        self._clicked_ys.clear()
         activity("SHOP list not read — opening ALL")
         return False
 
@@ -269,29 +290,53 @@ class ShopActor:
             y = info.top + found[1]
             activity(f"Clicking ALL at {x},{y}")
             click_at(info, x, y)
-            return self._sleep(0.08)
+            return self._sleep(0.20)
         point = clicks.screen_point("shop_all", info) or clicks.screen_point(subtab_key("SHOP", "ALL"), info)
         if point is not None and (point[0] - info.left) < int(info.width * 0.38):
             activity(f"Clicking taught ALL at {point[0]},{point[1]}")
             click_at(info, *point)
-            return self._sleep(0.08)
+            return self._sleep(0.20)
         vehicles = clicks.screen_point("shop_vehicles", info)
         vx = (vehicles[0] - info.left, vehicles[1] - info.top) if vehicles is not None else None
         ax, ay = equipment_all_click(info.width, info.height, vx)
         x = info.left + ax
         y = info.top + ay
-        activity(f"Clicking ALL at {x},{y} (left of WEAPONS)")
+        activity(f"Clicking cash ALL at {x},{y} (left of WEAPONS)")
         click_at(info, x, y)
-        return self._sleep(0.08)
+        return self._sleep(0.20)
+
+    def _click_lit_buy(self, info, frame, activity, cash: int | None = None) -> bool:
+        for cx, cy in find_lit_cash_buys(frame):
+            bucket = int(cy / 28)
+            if bucket in self._clicked_ys:
+                continue
+            x = info.left + cx
+            y = info.top + cy
+            if is_roblox_chrome(info, x, y) or cx < int(frame.shape[1] * BUY_COL) or cx >= int(frame.shape[1] * ROBUX_COL):
+                continue
+            if self._aborted() or not focus_window(info.hwnd):
+                return False
+            activity(f"Clicking lit BUY at {x},{y}")
+            if not click_at(info, x, y):
+                activity("BUY click failed")
+                return False
+            self._clicked_ys.add(bucket)
+            self._pending = f"LITBUY{bucket}"
+            self._cash_before = cash
+            self._pending_price = 500
+            self._last_click = time.time()
+            self._sleep(0.12)
+            return True
+        return False
 
     def _header_words(self, engine, frame) -> list[OCRWord]:
         if frame is None:
             return []
         height, width = frame.shape[:2]
         x1 = int(width * 0.12)
-        y1 = int(height * 0.10)
-        x2 = int(width * 0.52)
-        y2 = int(height * 0.40)
+        y1 = int(height * 0.16)
+        x2 = int(width * 0.50)
+        y2 = int(height * 0.38)
         crop = frame[y1:y2, x1:x2]
         return shift_words(engine.words(crop, min_confidence=16), x1, y1, scale=1.0)
 
@@ -346,9 +391,11 @@ class ShopActor:
             scroll_at(sx, sy, steps=5)
             self._went_top = True
             self._scrolls += 1
+            self._clicked_ys.clear()
             self._sleep(0.12)
             return
         activity("Scrolling down Shop")
         scroll_at(sx, sy, steps=-3)
         self._scrolls += 1
+        self._clicked_ys.clear()
         self._sleep(0.12)

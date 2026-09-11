@@ -58,7 +58,6 @@ class PerkActor:
         return True
 
     def step(self, engine, info, frame, wanted, stamina: int | None, activity, grab=None) -> bool:
-        self.waiting_for_give = False
         if self._aborted() or not wanted or frame is None or info is None:
             return False
         if time.time() - self._last_click < 0.25:
@@ -91,12 +90,13 @@ class PerkActor:
             seen_target = True
             if row.maximum and row.current is not None and row.current >= row.maximum:
                 activity(f"{target.name}: already maxed ({row.current}/{row.maximum})")
+                self.waiting_for_give = False
                 return False
             category = normalize_category(getattr(target, "category", "") or row.category)
             row.category = category
             if category == "give" and stamina is not None and stamina < 1:
-                activity(f"{target.name}: GIVE not ready, waiting")
-                self.waiting_for_give = True
+                activity(f"{target.name}: stamina 0 — GIVE stopped")
+                self.waiting_for_give = False
                 return False
             found = find_perk_button(frame, words, row, rows, stamina)
             if found is None:
@@ -133,6 +133,8 @@ class PerkActor:
                 return False
             self._last_click = time.time()
             self._scrolls = 0
+            if category == "give":
+                self.waiting_for_give = True
             return True
 
         shown = ", ".join(row.name for row in rows[:4])

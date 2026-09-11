@@ -88,6 +88,8 @@ class ShopTests(unittest.TestCase):
         self.assertFalse(is_shop_title("COMMON WEAPON"))
         self.assertTrue(is_shop_title("Switch Stiletto"))
         self.assertTrue(is_shop_title("Chamber Guard Halberd"))
+        self.assertTrue(is_shop_title("Length of Lead Pipe"))
+        self.assertFalse(is_shop_title("SOLD OUT"))
         self.assertFalse(is_shop_title("VIP chat tag, +10% cash earned, +10% max energy"))
         self.assertFalse(is_shop_title("Extra Operations Slot"))
         self.assertFalse(is_shop_title("Faster Energy Regen"))
@@ -141,14 +143,26 @@ class ShopTests(unittest.TestCase):
         frame = np.zeros((720, 1920, 3), dtype=np.uint8)
         self.assertIsNone(find_cash_buy_button(frame, 400, 22))
 
-    def test_green_price_is_not_the_buy_button(self):
+    def test_gold_buy_under_the_price_is_clicked(self):
+        from app.core.shop import find_lit_cash_buys, find_row_cash_buy
+
         frame = np.zeros((720, 1920, 3), dtype=np.uint8)
-        _paint_buy(frame, 980, 410, hue=50)
-        cx, cy = _paint_buy(frame, 1180, 410, hue=22)
+        _paint_buy(frame, 900, 380, w=80, h=20, hue=50)
+        cx, cy = _paint_buy(frame, 880, 410, w=141, h=44, hue=23)
         found = find_cash_buy_button(frame, 400, 22)
         self.assertIsNotNone(found)
-        self.assertAlmostEqual(found[0], cx, delta=8)
-        self.assertAlmostEqual(found[1], cy, delta=8)
+        self.assertAlmostEqual(found[0], cx, delta=12)
+        self.assertAlmostEqual(found[1], cy, delta=12)
+        self.assertIsNone(find_cash_buy_button(np.zeros((720, 1920, 3), dtype=np.uint8), 400, 22))
+        green_only = np.zeros((720, 1920, 3), dtype=np.uint8)
+        _paint_buy(green_only, 900, 380, w=100, h=22, hue=50)
+        self.assertIsNone(find_cash_buy_button(green_only, 400, 22))
+        words = [_word("Blockade Runner Skiff", 360, 400, 200, 22), _word("BUY", 920, 418, 70, 24)]
+        row = find_row_cash_buy(frame, words, 400, 22)
+        self.assertIsNotNone(row)
+        self.assertAlmostEqual(row[0], cx, delta=12)
+        lit = find_lit_cash_buys(frame)
+        self.assertTrue(any(abs(pt[0] - cx) < 16 for pt in lit))
         frame = np.zeros((720, 1920, 3), dtype=np.uint8)
         cx, cy = _paint_buy(frame, 1180, 410, hue=22)
         found = find_cash_buy_button(frame, 400, 22)
@@ -176,6 +190,12 @@ class ShopTests(unittest.TestCase):
         data = book.to_dict()
         self.assertTrue(data["withdraw_all"])
         self.assertTrue(data["deposit_all"])
+        self.assertTrue(book.want_deposit())
+        self.assertTrue(book.want_withdraw())
+        book.features["Bank"] = False
+        self.assertFalse(book.want_deposit())
+        self.assertFalse(book.want_withdraw())
+        self.assertTrue(book.deposit_all)
 
 
     def test_robux_words_on_the_same_row_do_not_hide_cash_stats(self):
@@ -279,10 +299,11 @@ class ShopTests(unittest.TestCase):
     def test_all_click_sits_left_of_vehicles(self):
         from app.core.shop import equipment_all_click
         x, y = equipment_all_click(1920, 1009, (700, 280))
-        self.assertLess(x, 400)
+        self.assertLess(x, 360)
+        self.assertGreaterEqual(x, int(1920 * 0.15))
         self.assertEqual(y, 280)
         fallback = equipment_all_click(1920, 1009)
-        self.assertLess(fallback[0], int(1920 * 0.38))
+        self.assertLess(fallback[0], int(1920 * 0.20))
 
     def test_small_price_counts_as_bought_when_hud_stays_at_millions(self):
         from app.core.shop_actor import ShopActor
@@ -319,23 +340,40 @@ class ShopTests(unittest.TestCase):
         actor._confirm_purchase(273_000_000, log.append)
         self.assertTrue(any("cash dropped" in line for line in log))
 
-    def test_blank_list_reopens_all_before_finishing(self):
+    def test_blank_list_keeps_reopening_all(self):
         from app.core.shop_actor import ShopActor
         actor = ShopActor()
         actor._opened = True
+        actor._clicked_ys = {14, 20, 24}
         log = []
-        for _ in range(5):
+        for _ in range(3):
             actor._empty_list(log.append)
         self.assertFalse(actor.pass_done)
+        self.assertFalse(actor._opened)
+        self.assertEqual(actor._clicked_ys, set())
         self.assertTrue(any("opening ALL" in line for line in log))
         actor._opened = True
-        for _ in range(5):
+        for _ in range(6):
             actor._empty_list(log.append)
-        actor._opened = True
-        for _ in range(5):
-            actor._empty_list(log.append)
-        self.assertTrue(actor.pass_done)
-        self.assertTrue(any("still not read" in line for line in log))
+        self.assertFalse(actor.pass_done)
+
+    def test_new_stock_clears_clicked_rows(self):
+        from app.core.shop_actor import ShopActor
+        actor = ShopActor()
+        actor.restock_left = 40
+        actor._clicked = {"ALLEYBRICK", "WORNLEATHER"}
+        actor._clicked_ys = {14, 20}
+        actor.pass_done = True
+        log = []
+        actor._fresh_stock(280, log.append)
+        self.assertEqual(actor._clicked, set())
+        self.assertEqual(actor._clicked_ys, set())
+        self.assertFalse(actor.pass_done)
+        self.assertEqual(actor.restock_left, 280)
+        self.assertTrue(any("New shop stock" in line for line in log))
+        actor._clicked.add("ALLEYBRICK")
+        actor._fresh_stock(270, log.append)
+        self.assertIn("ALLEYBRICK", actor._clicked)
 
 
 if __name__ == "__main__":

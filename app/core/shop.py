@@ -22,6 +22,8 @@ _CASH = re.compile(r"(?<![Rr])\$[\s]*([\d.,]+)(?:\s*([KMBT])\b)?", re.I)
 _ROBUX = re.compile(r"R\s*\$", re.I)
 _STOCK = re.compile(r"NEW\s*STOCK\s*IN\s*(\d+)\s*:\s*(\d+)", re.I)
 CASH_COL = 0.70
+BUY_COL = 0.45
+LIST_TOP = 0.32
 ROBUX_COL = 0.74
 _OWNED = re.compile(r"^owned\b", re.I)
 _OWNED_N = re.compile(r"owned\s*:?\s*(\d+)", re.I)
@@ -59,7 +61,7 @@ _CHROME = {
         "PROFILE BACKGROUND", "PROFILE BORDER",
         "VIP", "CHAT TAG", "GAMEPASS", "CASH EARNED", "MAX ENERGY",
         "ROBUX", "ROBUX SHOP", "GAME PASSES", "ALL GAME PASSES", "PRODUCTS",
-        "NO BANK FEES", "ONE TIME ONLY",
+        "NO BANK FEES", "ONE TIME ONLY", "SOLD OUT",
     )
 }
 _CHROME.update(NEVER_CLICK)
@@ -166,7 +168,8 @@ def is_shop_title(text: str) -> bool:
     letters = sum(ch.isalpha() for ch in raw)
     if letters < 6:
         return False
-    if any(part.isalpha() and part.islower() for part in raw.split()):
+    small = {"of", "the", "a", "an", "and", "or", "to"}
+    if any(part.isalpha() and part.islower() and part.lower() not in small for part in raw.split()):
         return False
     return " " in raw or letters >= 10
 
@@ -393,37 +396,64 @@ def harvest_shop_from_words(words: list, section: str = "") -> list[ShopItem]:
 
 
 def find_cash_buy_button(frame, row_y: int, row_h: int = 24) -> tuple[int, int] | None:
-    """Lit gold BUY on this cash row. Ignores the green $ price."""
+    """Lit gold BUY on this row. Not the green $, not grey LEVEL."""
+    pills = _cash_buy_pills(frame, row_y, row_h)
+    return pills[0] if pills else None
+
+
+def find_lit_cash_buys(frame) -> list[tuple[int, int]]:
+    """Every lit cash BUY pill on EQUIPMENT (CASH). Top to bottom. Not prices, not Robux."""
     if frame is None or getattr(frame, "size", 0) == 0:
-        return None
+        return []
+    height = int(frame.shape[0])
+    found = []
+    seen: set[int] = set()
+    top = int(height * LIST_TOP)
+    for cy in range(top, int(height * 0.86), max(22, int(height * 0.045))):
+        for cx, py in _cash_buy_pills(frame, cy, 24):
+            if py < top:
+                continue
+            bucket = int(py / 36)
+            if bucket in seen:
+                continue
+            seen.add(bucket)
+            found.append((cx, py))
+    found.sort(key=lambda point: point[1])
+    return found
+
+
+def _cash_buy_pills(frame, row_y: int, row_h: int = 24) -> list[tuple[int, int]]:
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return []
     height, width = frame.shape[:2]
     y1 = max(0, int(row_y) - scale_y(height, 20))
     y2 = min(height, int(row_y) + max(int(row_h), scale_y(height, 24)) + scale_y(height, 90))
-    x1 = int(width * 0.48)
+    x1 = int(width * BUY_COL)
     x2 = int(width * CASH_COL)
     panel = frame[y1:y2, x1:x2]
     if panel.size == 0:
-        return None
+        return []
     hsv = cv2.cvtColor(panel, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, (8, 60, 90), (34, 255, 255))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     want_y = int(row_y) + max(int(row_h), scale_y(height, 20))
-    best = None
-    best_score = 10**9
+    min_w = scale_x(width, 56, floor=36)
+    min_h = scale_y(height, 18, floor=12)
+    hits = []
     for contour in contours:
         x, y, box_w, box_h = cv2.boundingRect(contour)
-        if box_w < scale_x(width, 48, floor=28) or box_h < scale_y(height, 16, floor=10) or box_w < box_h * 1.4:
+        if box_w < min_w or box_h < min_h or box_w < box_h * 1.5:
             continue
         cx = x1 + x + box_w // 2
         cy = y1 + y + box_h // 2
-        if abs(cy - want_y) > scale_y(height, 50):
+        if cy < int(height * LIST_TOP) or cy > int(height * 0.88):
             continue
-        score = abs(cy - want_y) - (cx / 20)
-        if score < best_score:
-            best_score = score
-            best = (cx, cy)
-    return best
+        if abs(cy - want_y) > scale_y(height, 56):
+            continue
+        hits.append((cx, cy, box_w))
+    hits.sort(key=lambda item: (-item[0], abs(item[1] - want_y)))
+    return [(cx, cy) for cx, cy, _w in hits]
 
 
 def find_row_cash_buy(frame, words, row_y: int, row_h: int = 24) -> tuple[int, int] | None:
@@ -439,7 +469,7 @@ def find_row_cash_buy(frame, words, row_y: int, row_h: int = 24) -> tuple[int, i
             continue
         cx = int(getattr(word, "cx", word.x + max(int(word.width), 1) // 2))
         cy = int(getattr(word, "cy", word.y + max(int(word.height), 1) // 2))
-        if cx < int(width * 0.48) or cx >= int(width * CASH_COL):
+        if cx < int(width * BUY_COL) or cx >= int(width * CASH_COL):
             continue
         if abs(int(word.y) - int(row_y)) > 88:
             continue
@@ -449,8 +479,9 @@ def find_row_cash_buy(frame, words, row_y: int, row_h: int = 24) -> tuple[int, i
     if near:
         near.sort()
         _dist, cx, cy, wy, wh = near[0]
-        if find_cash_buy_button(frame, wy, wh) is None:
-            return None
+        found = find_cash_buy_button(frame, wy, wh)
+        if found is not None:
+            return found
         return (cx, cy)
     found = find_cash_buy_button(frame, row_y, row_h)
     if found is None or found[1] > int(height * 0.90):
@@ -560,13 +591,14 @@ def _all_is_game_passes(word: OCRWord, words: list[OCRWord] | None) -> bool:
 
 
 def equipment_all_click(width: int, height: int, vehicles: tuple[int, int] | None = None) -> tuple[int, int]:
-    """ALL on the cash filter strip. Same row as VEHICLES, three tabs left. Not Robux."""
+    """ALL on the cash filter strip. Three chips left of VEHICLES. Not Robux ALL."""
     if vehicles is not None:
         vx, vy = int(vehicles[0]), int(vehicles[1])
-        x = max(int(width * 0.165), vx - int(width * 0.17))
-        if x < int(width * 0.38):
-            return (x, vy)
-    return (int(width * 0.195), int(height * 0.278))
+        step = max(int(width * 0.068), 80)
+        x = vx - 3 * step
+        x = max(int(width * 0.150), min(x, int(width * 0.185)))
+        return (x, vy)
+    return (int(width * 0.168), int(height * 0.278))
 
 
 def _fill_shop_stats(target: ShopItem, source: ShopItem) -> None:

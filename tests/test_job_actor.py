@@ -25,6 +25,19 @@ class JobActorHaltTests(unittest.TestCase):
         self.assertFalse(actor._opened_jobs)
         self.assertFalse(actor.out_of_energy)
 
+    def test_recent_click_does_not_spam_do_job(self):
+        actor = JobActor()
+        actor._last_click = __import__("time").time()
+        self.assertFalse(actor.step(None, None, None, ["job"], 50, lambda _: None))
+
+    def test_arm_after_break_allows_job_again(self):
+        actor = JobActor()
+        actor._wait_cycle = True
+        actor._saw_unready = False
+        actor.arm_after_break()
+        self.assertFalse(actor._wait_cycle)
+        self.assertFalse(actor._saw_unready)
+
     def test_job_list_band_skips_rail_and_do_job(self):
         import numpy as np
 

@@ -385,8 +385,8 @@ class MainWindow(QMainWindow):
             + len(self.playbook.selected_perks())
             + len(self.playbook.selected_shop())
             + int(shop_on)
-            + int(self.playbook.withdraw_all)
-            + int(self.playbook.deposit_all)
+            + int(bank_on and self.playbook.withdraw_all)
+            + int(bank_on and self.playbook.deposit_all)
         )
         mapped = bool(
             (not jobs_on or self.playbook.jobs)
@@ -447,18 +447,16 @@ class MainWindow(QMainWindow):
         self.paused = False
         self.start_btn.setText("Pause")
         self.status.setText("Scanning")
-        chosen = self.playbook.selected_jobs()
-        perks = self.playbook.selected_perks()
-        shop = self.playbook.selected_shop()
+        jobs_on = bool(self.playbook.features.get("Jobs"))
+        family_on = bool(self.playbook.features.get("Family"))
         shop_on = bool(self.playbook.features.get("Shop"))
-        if chosen:
-            self.playbook.features["Jobs"] = True
-        if perks:
-            self.playbook.features["Family"] = True
-        if shop:
-            self.playbook.features["Shop"] = True
-            shop_on = True
-        if chosen or perks or shop or shop_on or self.playbook.withdraw_all or self.playbook.deposit_all:
+        bank_on = bool(self.playbook.features.get("Bank"))
+        chosen = self.playbook.selected_jobs() if jobs_on else []
+        perks = self.playbook.selected_perks() if family_on else []
+        shop = self.playbook.selected_shop() if shop_on else []
+        want_withdraw = bank_on and bool(self.playbook.withdraw_all)
+        want_deposit = bank_on and bool(self.playbook.deposit_all)
+        if chosen or perks or shop or shop_on or want_withdraw or want_deposit:
             self.playbook.save()
         bits = []
         if chosen:
@@ -473,11 +471,11 @@ class MainWindow(QMainWindow):
                 self.logger.log(f"Shop ALL: gold BUY on {len(shop)} ticked name(s) you can afford. Each row once. LEVEL lock is skipped. Stock rotates every 5 min.")
             else:
                 self.logger.log("Shop ALL: gold BUY only if cash on hand covers the price. Each row once. LEVEL lock is skipped. Stock rotates every 5 min.")
-        if self.playbook.withdraw_all:
+        if want_withdraw:
             self.logger.log("Bank WITHDRAW ALL is on.")
-        if self.playbook.deposit_all:
+        if want_deposit:
             self.logger.log("Bank DEPOSIT ALL is on.")
-        if chosen or perks or shop_on or self.playbook.withdraw_all or self.playbook.deposit_all:
+        if chosen or perks or shop_on or want_withdraw or want_deposit:
             self.status.setText("Running")
             self.status_detail.setText(f"{' • '.join(bits) or 'Bank'} • ready buttons only")
         else:
@@ -833,8 +831,8 @@ class MainWindow(QMainWindow):
             len(self.playbook.selected_jobs())
             + len(self.playbook.selected_perks())
             + len(self.playbook.selected_shop())
-            + int(self.playbook.withdraw_all)
-            + int(self.playbook.deposit_all)
+            + int(bank_on and self.playbook.withdraw_all)
+            + int(bank_on and self.playbook.deposit_all)
         )
         self.targets_count.setText(f"{picked} selected")
         self.targets_hint.setText(

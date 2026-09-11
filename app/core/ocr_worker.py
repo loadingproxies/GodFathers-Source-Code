@@ -13,7 +13,6 @@ from app.core.job_actor import JobActor
 from app.core.perk_actor import PerkActor
 from app.core.shop_actor import ShopActor
 from app.core.bank_actor import BankActor
-from app.core.shop import SHOP_RESTOCK_SECONDS
 from app.core.labels import label_key, looks_like_roblox_website_words
 from app.core.ocr_engine import OCREngine, OCRResult
 from app.core.parsers import parse_ocr
@@ -41,6 +40,63 @@ class PreviewFrame:
     readings: list[PreviewReading] = field(default_factory=list)
     demo: bool = False
     window_title: str = ""
+
+
+def start_work(playbook) -> tuple[str, str]:
+    if playbook is None:
+        return "jobs", "shop"
+    if playbook.shop_enabled():
+        return "shop", "withdraw" if playbook.want_withdraw() else "shop"
+    if playbook.want_withdraw() or playbook.want_deposit():
+        return "bank", "withdraw" if playbook.want_withdraw() else "deposit"
+    if playbook.family_enabled() and playbook.selected_perks():
+        return "perks", "shop"
+    return "jobs", "shop"
+
+
+def lane_after_perks(
+    stamina: int | None,
+    waiting_for_give: bool,
+    wanted_jobs: bool,
+    shop_ready: bool,
+    want_deposit: bool,
+) -> str:
+    if stamina is not None and stamina < 1:
+        if wanted_jobs:
+            return "jobs"
+        if shop_ready:
+            return "shop"
+        if want_deposit:
+            return "bank"
+        return "perks"
+    if waiting_for_give:
+        return "perks"
+    if shop_ready:
+        return "shop"
+    if want_deposit:
+        return "bank"
+    return "jobs" if wanted_jobs else "perks"
+
+
+def lane_after_jobs(
+    out_of_energy: bool,
+    stamina: int | None,
+    wanted_perks: bool,
+    wanted_jobs: bool,
+    shop_ready: bool,
+    want_deposit: bool,
+) -> str:
+    if wanted_perks and stamina is not None and stamina >= 1:
+        return "perks"
+    if wanted_perks and out_of_energy and stamina is None:
+        return "perks"
+    if shop_ready:
+        return "shop"
+    if want_deposit:
+        return "bank"
+    if wanted_jobs:
+        return "jobs"
+    return "perks" if wanted_perks else "jobs"
 
 
 class OCRWorker(QThread):
@@ -130,12 +186,7 @@ class OCRWorker(QThread):
         self._lane = "jobs"
         self._shop_phase = "shop"
         self._shop_wait_until = 0.0
-        if self.playbook is not None and self.playbook.shop_enabled():
-            self._lane = "shop"
-            self._shop_phase = "withdraw" if self.playbook.withdraw_all else "shop"
-        elif self.playbook is not None and (self.playbook.withdraw_all or self.playbook.deposit_all):
-            self._lane = "bank"
-            self._shop_phase = "withdraw" if self.playbook.withdraw_all else "deposit"
+        self._lane, self._shop_phase = start_work(self.playbook)
         try:
             if not self.settings.demo_mode:
                 self.capture.start()
@@ -319,12 +370,24 @@ class OCRWorker(QThread):
                 )
             )
 
-        wanted_jobs = self.playbook.selected_jobs() if self.playbook is not None else []
-        wanted_perks = self.playbook.selected_perks() if self.playbook is not None else []
-        wanted_shop = self.playbook.selected_shop() if self.playbook is not None else []
+        wanted_jobs = (
+            self.playbook.selected_jobs()
+            if self.playbook is not None and self.playbook.jobs_enabled()
+            else []
+        )
+        wanted_perks = (
+            self.playbook.selected_perks()
+            if self.playbook is not None and self.playbook.family_enabled()
+            else []
+        )
+        wanted_shop = (
+            self.playbook.selected_shop()
+            if self.playbook is not None and self.playbook.shop_enabled()
+            else []
+        )
         shop_on = bool(self.playbook is not None and self.playbook.shop_enabled())
-        want_withdraw = bool(self.playbook is not None and self.playbook.withdraw_all)
-        want_deposit = bool(self.playbook is not None and self.playbook.deposit_all)
+        want_withdraw = bool(self.playbook is not None and self.playbook.want_withdraw())
+        want_deposit = bool(self.playbook is not None and self.playbook.want_deposit())
         live = self.windows.ensure_game()
         if live is not None:
             info = live
@@ -364,6 +427,13 @@ class OCRWorker(QThread):
         shop_on: bool, want_withdraw: bool, want_deposit: bool,
     ) -> None:
         waiting_stock = shop_on and self._shop_wait_until and time.time() < self._shop_wait_until
+        if (
+            self._lane == "jobs"
+            and wanted_perks
+            and self.state.stamina is not None
+            and self.state.stamina >= 1
+        ):
+            self._lane = "perks"
         use_shop = shop_on and not waiting_stock and (
             self._lane == "shop" or (not wanted_jobs and not wanted_perks)
         )
@@ -411,7 +481,7 @@ class OCRWorker(QThread):
                     else:
                         wait = self.shop_actor.restock_left
                         if wait is None:
-                            wait = SHOP_RESTOCK_SECONDS
+                            wait = 15
                         self._shop_wait_until = time.time() + max(15, int(wait))
                 else:
                     return
@@ -423,7 +493,7 @@ class OCRWorker(QThread):
                 self._shop_phase = "idle"
                 wait = self.shop_actor.restock_left
                 if wait is None:
-                    wait = SHOP_RESTOCK_SECONDS
+                    wait = 15
                 self._shop_wait_until = time.time() + max(15, int(wait))
             self._lane = "jobs" if wanted_jobs else ("perks" if wanted_perks else "shop")
             if self._lane == "shop":
@@ -444,16 +514,20 @@ class OCRWorker(QThread):
                 self.activity.emit,
                 grab=grab,
             )
-            if self.perk_actor.waiting_for_give:
-                self._lane = "perks"
-            elif shop_on and (not self._shop_wait_until or time.time() >= self._shop_wait_until):
-                self._lane = "shop"
+            shop_ready = shop_on and (not self._shop_wait_until or time.time() >= self._shop_wait_until)
+            next_lane = lane_after_perks(
+                self.state.stamina,
+                self.perk_actor.waiting_for_give,
+                bool(wanted_jobs),
+                shop_ready,
+                want_deposit and not shop_on,
+            )
+            if self._lane == "perks" and next_lane == "jobs":
+                self.actor.arm_after_break()
+            self._lane = next_lane
+            if self._lane == "shop":
                 self._shop_phase = "withdraw" if want_withdraw else "shop"
                 self.shop_actor.reset()
-            elif want_deposit and not shop_on:
-                self._lane = "bank"
-            else:
-                self._lane = "jobs" if wanted_jobs else "perks"
             return
         self.perk_actor._opened = False
         self.shop_actor._opened = False
@@ -468,18 +542,18 @@ class OCRWorker(QThread):
                 self.activity.emit,
                 grab=grab,
             )
-        if self.actor.out_of_energy and wanted_perks:
-            self._lane = "perks"
-        elif shop_on and (not self._shop_wait_until or time.time() >= self._shop_wait_until):
-            self._lane = "shop"
+        shop_ready = shop_on and (not self._shop_wait_until or time.time() >= self._shop_wait_until)
+        self._lane = lane_after_jobs(
+            self.actor.out_of_energy,
+            self.state.stamina,
+            bool(wanted_perks),
+            bool(wanted_jobs),
+            shop_ready,
+            want_deposit and not shop_on,
+        )
+        if self._lane == "shop":
             self._shop_phase = "withdraw" if want_withdraw else "shop"
             self.shop_actor.reset()
-        elif want_deposit and not shop_on:
-            self._lane = "bank"
-        elif wanted_jobs:
-            self._lane = "jobs"
-        else:
-            self._lane = "perks" if wanted_perks else "jobs"
 
     def _read_hud(self, frame, readings: list[PreviewReading]) -> None:
         height, width = frame.shape[:2]

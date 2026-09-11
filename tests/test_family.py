@@ -1,3 +1,4 @@
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -295,6 +296,13 @@ class FamilyPerkTests(unittest.TestCase):
         actor.reset()
         self.assertFalse(actor.waiting_for_give)
 
+    def test_give_cooldown_does_not_leave_family(self):
+        actor = PerkActor()
+        actor.waiting_for_give = True
+        actor._last_click = time.time()
+        self.assertFalse(actor.step(None, None, None, ["Enforcers"], 16, lambda _: None))
+        self.assertTrue(actor.waiting_for_give)
+
     def test_perk_list_band_is_the_right_column(self):
         frame = np.zeros((1009, 1920, 3), dtype=np.uint8)
         crop, x1, y1 = perk_list_band(frame)
@@ -320,6 +328,39 @@ class FamilyPerkTests(unittest.TestCase):
         self.assertTrue(actor._opened)
         self.assertTrue(any("taught FAMILY" in line for line in notes))
         self.assertTrue(any("taught PERKS" in line for line in notes))
+
+    def test_family_first_until_stamina_is_gone(self):
+        from app.core.ocr_worker import start_work, lane_after_jobs, lane_after_perks
+        book = Playbook(features={"Jobs": True, "Family": True})
+        book.perks = [TargetPerk(name="Enforcers", selected=True)]
+        self.assertEqual(start_work(book)[0], "perks")
+        self.assertEqual(
+            lane_after_perks(20, True, True, False, False),
+            "perks",
+        )
+        self.assertEqual(
+            lane_after_perks(0, False, True, False, False),
+            "jobs",
+        )
+        self.assertEqual(
+            lane_after_jobs(False, 20, True, True, False, False),
+            "perks",
+        )
+        self.assertEqual(
+            lane_after_jobs(False, 0, True, True, False, False),
+            "jobs",
+        )
+        self.assertEqual(
+            lane_after_jobs(True, 20, True, True, False, False),
+            "perks",
+        )
+        self.assertEqual(
+            lane_after_jobs(True, 0, True, True, False, False),
+            "jobs",
+        )
+        self.assertEqual(preferred_give_amount(20), 5)
+        self.assertEqual(preferred_give_amount(4), 1)
+        self.assertEqual(preferred_give_amount(0), 1)
 
 
 if __name__ == "__main__":
