@@ -70,8 +70,6 @@ _FIGHT_TOAST_KEYS = (
     "FOUGHTOFF",
     "WEREATTACKED",
     "GOTNOTHING",
-    "OPENCURSORTOVIEW",
-    "AGENTSOUTPUT",
 )
 
 
@@ -457,7 +455,7 @@ def job_names_match(left: str, right: str) -> bool:
 
 
 def is_fight_toast(text: str) -> bool:
-    """Attack popups, player names, and Cursor chrome — not job rows."""
+    """Attack popups and player names — not job rows."""
     raw = (text or "").strip()
     if not raw:
         return False
