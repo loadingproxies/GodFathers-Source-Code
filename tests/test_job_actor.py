@@ -1,0 +1,39 @@
+import unittest
+
+from app.core.job_actor import JobActor
+from app.core.jobs import job_list_band
+
+
+class JobActorHaltTests(unittest.TestCase):
+    def test_halt_aborts_sleep(self):
+        actor = JobActor()
+        actor.halt()
+        self.assertTrue(actor._aborted())
+        self.assertFalse(actor._sleep(1.0))
+
+    def test_pause_aborts_clicks(self):
+        actor = JobActor()
+        actor.set_paused(True)
+        self.assertTrue(actor._aborted())
+        self.assertFalse(actor.step(None, None, None, ["job"], None, lambda _: None))
+
+    def test_reset_must_open_jobs_again(self):
+        actor = JobActor()
+        actor._opened_jobs = True
+        actor.out_of_energy = True
+        actor.reset()
+        self.assertFalse(actor._opened_jobs)
+        self.assertFalse(actor.out_of_energy)
+
+    def test_job_list_band_skips_rail_and_do_job(self):
+        import numpy as np
+
+        frame = np.zeros((1009, 1920, 3), dtype=np.uint8)
+        crop, x1, y1 = job_list_band(frame)
+        self.assertGreaterEqual(x1, 300)
+        self.assertLess(crop.shape[1], 1200)
+        self.assertGreater(y1, 100)
+
+
+if __name__ == "__main__":
+    unittest.main()

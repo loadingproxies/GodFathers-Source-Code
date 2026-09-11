@@ -1,0 +1,16 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.cursor/
+dist/
+build/
+logs/
+captures/
+config/clicks.json
+config/playbook.json
+config/settings.json
+config/rois.json
+*.log
+.DS_Store
+Thumbs.db
