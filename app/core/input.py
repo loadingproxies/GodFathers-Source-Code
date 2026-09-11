@@ -21,12 +21,20 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
-SWP_SHOWWINDOW = 0x0040
-HWND_TOPMOST = -1
-HWND_NOTOPMOST = -2
 GA_ROOT = 2
 VK_MENU = 0x12
 KEYEVENTF_KEYUP = 0x0002
+
+_clicks_halted = False
+
+
+def set_clicks_halted(halted: bool) -> None:
+    global _clicks_halted
+    _clicks_halted = bool(halted)
+
+
+def clicks_halted() -> bool:
+    return bool(_clicks_halted)
 
 
 def _is_foreground(hwnd: int) -> bool:
@@ -52,6 +60,8 @@ def focus_window(hwnd: int, retries: int = 5) -> bool:
             time.sleep(0.2)
         our_tid = kernel32.GetCurrentThreadId()
         for _ in range(max(1, retries)):
+            if clicks_halted():
+                return False
             if _is_foreground(hwnd):
                 return True
             _tap_alt()
@@ -167,6 +177,8 @@ def _cursor_pos() -> tuple[int, int]:
 
 def glide_to(x: int, y: int, steps: int = 12) -> bool:
     """Move into the button. Roblox ignores a cursor teleport with no hover."""
+    if clicks_halted():
+        return False
     x, y = int(x), int(y)
     try:
         cx, cy = _cursor_pos()
@@ -175,6 +187,8 @@ def glide_to(x: int, y: int, steps: int = 12) -> bool:
     dist = max(abs(x - cx), abs(y - cy))
     count = max(4, min(int(steps), dist if dist > 0 else 4))
     for index in range(1, count + 1):
+        if clicks_halted():
+            return False
         ix = int(round(cx + (x - cx) * index / count))
         iy = int(round(cy + (y - cy) * index / count))
         if not _abs_move(ix, iy):
@@ -235,7 +249,7 @@ def click_stays_on_game(hwnd: int, x: int, y: int) -> bool:
     hit = _hwnd_at(x, y)
     if not hit:
         return False
-    if _overlay_passthrough and _is_overlay_hwnd(hit):
+    if _is_overlay_hwnd(hit):
         return True
     return _root_hwnd(hit) == _root_hwnd(int(hwnd))
 
@@ -269,7 +283,6 @@ def rail_x(info, word_cx: int | None = None) -> int:
 
 
 _overlay_hwnds: list[int] = []
-_overlay_rects: dict[int, tuple[int, int]] = {}
 _overlay_passthrough = False
 
 GWL_EXSTYLE = -20
@@ -322,47 +335,6 @@ def unregister_click_overlay(hwnd: int) -> None:
     if value in _overlay_hwnds:
         _apply_click_through(value, False)
         _overlay_hwnds.remove(value)
-    _overlay_rects.pop(value, None)
-
-
-def _park_overlays() -> None:
-    """Slide the HUD off-screen with Win32. Do not hide() Qt from this thread."""
-    for hwnd in list(_overlay_hwnds):
-        try:
-            if not user32.IsWindow(hwnd):
-                continue
-            rect = wintypes.RECT()
-            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                continue
-            left, top = int(rect.left), int(rect.top)
-            if left > -4000 and hwnd not in _overlay_rects:
-                _overlay_rects[hwnd] = (left, top)
-            user32.SetWindowPos(hwnd, 0, -8000, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
-        except Exception:
-            continue
-    time.sleep(0.05)
-
-
-def _unpark_overlays() -> None:
-    for hwnd, pos in list(_overlay_rects.items()):
-        try:
-            if user32.IsWindow(hwnd):
-                user32.SetWindowPos(hwnd, 0, pos[0], pos[1], 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
-        except Exception:
-            continue
-    _overlay_rects.clear()
-
-
-def _arm_click_overlays() -> None:
-    if _overlay_passthrough:
-        return
-    _park_overlays()
-
-
-def _disarm_click_overlays() -> None:
-    if _overlay_passthrough:
-        return
-    _unpark_overlays()
 
 
 def click_nav(info, y: int, word_cx: int | None = None) -> bool:
@@ -378,55 +350,31 @@ def click_nav(info, y: int, word_cx: int | None = None) -> bool:
     return click_screen(x, screen_y, getattr(info, "hwnd", None))
 
 
-def _pin_game(hwnd: int | None) -> None:
-    if not hwnd or not user32.IsWindow(int(hwnd)):
-        return
-    hwnd = int(hwnd)
-    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
-    user32.BringWindowToTop(hwnd)
-    user32.SetForegroundWindow(hwnd)
-
-
-def _unpin_game(hwnd: int | None) -> None:
-    if not hwnd or not user32.IsWindow(int(hwnd)):
-        return
-    user32.SetWindowPos(int(hwnd), HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
-
-
 def _click_like_miniwarbot(x: int, y: int) -> bool:
-    if not glide_to(x, y):
+    if clicks_halted() or not glide_to(x, y):
         return False
     time.sleep(0.32)
-    if not _abs_button(x, y, MOUSEEVENTF_LEFTDOWN):
+    if clicks_halted() or not _abs_button(x, y, MOUSEEVENTF_LEFTDOWN):
         return False
     time.sleep(0.12)
-    if not _abs_button(x, y, MOUSEEVENTF_LEFTUP):
+    if clicks_halted() or not _abs_button(x, y, MOUSEEVENTF_LEFTUP):
         return False
     time.sleep(0.16)
     return True
 
 
 def click_screen(x: int, y: int, hwnd: int | None = None) -> bool:
-    _arm_click_overlays()
+    if clicks_halted():
+        return False
     try:
         if hwnd:
             focus_window(hwnd)
-            if not _is_foreground(int(hwnd)):
-                _pin_game(hwnd)
             time.sleep(0.08)
-        if hwnd and not click_stays_on_game(int(hwnd), int(x), int(y)):
-            _pin_game(hwnd)
-            time.sleep(0.08)
-            _abs_move(int(x), int(y))
-            time.sleep(0.04)
         if hwnd and not click_stays_on_game(int(hwnd), int(x), int(y)):
             return False
         return _click_like_miniwarbot(int(x), int(y))
     except Exception:
         return False
-    finally:
-        _unpin_game(hwnd)
-        _disarm_click_overlays()
 
 
 def click_tab(info, x: int, y: int) -> bool:
@@ -468,12 +416,11 @@ def press_escape() -> bool:
 
 
 def scroll_at(x: int, y: int, steps: int = -4) -> bool:
-    _arm_click_overlays()
+    if clicks_halted():
+        return False
     try:
-        glide_to(int(x), int(y), steps=8)
+        _abs_move(int(x), int(y))
         time.sleep(0.04)
         return _send(_mouse(flags=MOUSEEVENTF_WHEEL, data=int(WHEEL_DELTA * steps)))
     except Exception:
         return False
-    finally:
-        _disarm_click_overlays()

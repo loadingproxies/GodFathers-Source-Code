@@ -19,6 +19,7 @@ class AppSettings:
     selected_window_title: str = ""
     seen_guide: bool = False
     game_language: str = "auto"
+    stop_hotkey: str = "F3"
 
     def __post_init__(self) -> None:
         try:
@@ -45,6 +46,9 @@ class AppSettings:
         from app.core.locale_pack import normalize_game_language
 
         self.game_language = normalize_game_language(getattr(self, "game_language", "auto"))
+        from app.core.hotkey import normalize_stop_key
+
+        self.stop_hotkey = normalize_stop_key(getattr(self, "stop_hotkey", "F3"))
 
     def to_dict(self) -> dict:
         return asdict(self)

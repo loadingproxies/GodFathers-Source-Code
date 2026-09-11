@@ -210,6 +210,18 @@ def covering_title(x: int, y: int) -> str:
         return ""
 
 
+def _front_hit_ok(hit: int, hwnd: int) -> bool:
+    """Our Live HUD can sit on a sample point. Firefox / another app cannot."""
+    if not hit or int(hit) == int(hwnd):
+        return bool(hit) and int(hit) == int(hwnd)
+    try:
+        from app.core.input import _is_overlay_hwnd
+
+        return _is_overlay_hwnd(int(hit))
+    except Exception:
+        return False
+
+
 def is_window_in_front(info: WindowInfo | None) -> bool:
     """False when Firefox / another window covers the game, including the left tab rail."""
     if info is None or not info.available:
@@ -221,7 +233,7 @@ def is_window_in_front(info: WindowInfo | None) -> bool:
             (info.left + info.width * 0.06, info.top + info.height * 0.74),
         )
         hwnd = int(info.hwnd)
-        return all(_root_at(x, y) == hwnd for x, y in points)
+        return all(_front_hit_ok(_root_at(x, y), hwnd) for x, y in points)
     except Exception:
         return False
 

@@ -5,6 +5,18 @@ from app.core.jobs import job_list_band
 
 
 class JobActorHaltTests(unittest.TestCase):
+    def test_global_halt_stops_mouse_moves(self):
+        from app.core.input import clicks_halted, glide_to, scroll_at, set_clicks_halted
+
+        set_clicks_halted(True)
+        try:
+            self.assertTrue(clicks_halted())
+            self.assertFalse(glide_to(10, 10, steps=4))
+            self.assertFalse(scroll_at(10, 10, steps=-1))
+        finally:
+            set_clicks_halted(False)
+        self.assertFalse(clicks_halted())
+
     def test_halt_aborts_sleep(self):
         actor = JobActor()
         actor.halt()

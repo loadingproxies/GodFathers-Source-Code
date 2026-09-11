@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.core.hotkey import STOP_KEYS, normalize_stop_key
 from app.core.locale_pack import GAME_LANGUAGES, normalize_game_language
 from app.core.ocr_engine import ocr_available
 from app.core.screen_capture import ScreenCapture
@@ -82,6 +83,13 @@ class SettingsDialog(QDialog):
         self.game_language.setCurrentIndex(max(0, lang_index))
         form.addRow("Game language", self.game_language)
 
+        self.stop_hotkey = QComboBox()
+        for name, _vk in STOP_KEYS:
+            self.stop_hotkey.addItem(name, name)
+        stop_index = self.stop_hotkey.findData(normalize_stop_key(self.settings.stop_hotkey))
+        self.stop_hotkey.setCurrentIndex(max(0, stop_index))
+        form.addRow("Stop key", self.stop_hotkey)
+
         self.interval = QComboBox()
         for value in SCAN_INTERVALS:
             self.interval.addItem(_interval_label(value), value)
@@ -151,6 +159,7 @@ class SettingsDialog(QDialog):
     def apply_to_settings(self) -> AppSettings:
         self.settings.ocr_engine = "RapidOCR"
         self.settings.game_language = normalize_game_language(self.game_language.currentData())
+        self.settings.stop_hotkey = normalize_stop_key(self.stop_hotkey.currentData())
         self.settings.scan_interval = float(self.interval.currentData())
         self.settings.min_confidence = float(self.confidence.value())
         self.settings.preprocessing_mode = str(self.preprocess.currentData())

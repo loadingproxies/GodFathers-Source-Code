@@ -65,6 +65,23 @@ class LabelTests(unittest.TestCase):
         unregister_click_overlay(4242)
         self.assertNotIn(4242, _overlay_hwnds)
 
+    def test_clicks_do_not_park_the_hud(self):
+        import app.core.input as input_mod
+
+        self.assertFalse(hasattr(input_mod, "_park_overlays"))
+        self.assertFalse(hasattr(input_mod, "_pin_game"))
+
+    def test_live_hud_does_not_count_as_covering_the_game(self):
+        from app.core.window_manager import _front_hit_ok
+
+        register_click_overlay(4242)
+        try:
+            self.assertTrue(_front_hit_ok(100, 100))
+            self.assertTrue(_front_hit_ok(4242, 100))
+            self.assertFalse(_front_hit_ok(88, 100))
+        finally:
+            unregister_click_overlay(4242)
+
     def test_hud_sits_bottom_left_away_from_give(self):
         x, y = hud_home_pos(0, 0, 1920, 1040, 400, 320)
         self.assertEqual((x, y), (16, 704))

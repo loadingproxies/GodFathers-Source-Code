@@ -382,8 +382,8 @@ class ShopActor:
         if taught is not None:
             sx, sy = taught
         else:
-            sx = info.left + int(info.width * 0.42)
-            sy = info.top + int(info.height * 0.52)
+            sx = info.left + int(info.width * 0.30)
+            sy = info.top + int(info.height * 0.42)
         if not focus_window(info.hwnd):
             return
         if not self._went_top:

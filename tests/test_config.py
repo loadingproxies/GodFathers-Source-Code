@@ -32,6 +32,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(loaded.selected_window_title, "Roblox")
             self.assertTrue(loaded.seen_guide)
             self.assertEqual(loaded.game_language, "auto")
+            self.assertEqual(loaded.stop_hotkey, "F3")
 
     def test_invalid_interval_snaps(self):
         settings = AppSettings(scan_interval=1.3)
@@ -56,6 +57,15 @@ class ConfigTests(unittest.TestCase):
             rois = ROIManager.load(rois_path)
             self.assertTrue(settings.demo_mode)
             self.assertGreaterEqual(len(rois.rois), 19)
+
+    def test_stop_hotkey_snaps(self):
+        from app.core.hotkey import normalize_stop_key, stop_key_vk
+
+        self.assertEqual(normalize_stop_key("F8"), "F8")
+        self.assertEqual(normalize_stop_key("nope"), "F3")
+        self.assertEqual(AppSettings(stop_hotkey="Pause").stop_hotkey, "Pause")
+        self.assertEqual(AppSettings(stop_hotkey="F11").stop_hotkey, "F3")
+        self.assertEqual(stop_key_vk("F3"), 0x72)
 
 
 if __name__ == "__main__":

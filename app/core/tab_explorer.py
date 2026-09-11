@@ -567,10 +567,10 @@ class TabExplorer(QThread):
                 size=(live.width, live.height),
             )
             return taught
-        x = live.left + int(live.width * 0.58)
-        y = live.top + int(live.height * 0.55)
+        x = live.left + int(live.width * 0.30)
+        y = live.top + int(live.height * 0.42)
         if (name or "").upper() in {"FAMILY", "PERKS", "FAMILY_PERKS"}:
-            x = live.left + int(live.width * 0.72)
+            x = live.left + int(live.width * 0.40)
         self._remember(
             scroll_key(name or "JOBS"),
             x - live.left,

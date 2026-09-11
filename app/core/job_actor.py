@@ -261,8 +261,8 @@ class JobActor:
         if taught is not None:
             content_x, content_y = taught
         else:
-            content_x = info.left + int(info.width * 0.58)
-            content_y = info.top + int(info.height * 0.55)
+            content_x = info.left + int(info.width * 0.30)
+            content_y = info.top + int(info.height * 0.42)
         looking = ", ".join(item.name for item in wanted[:3]) or "the ticked job"
         target = wanted[0] if wanted else None
         target_zone = (target.zone if target else "") or ""

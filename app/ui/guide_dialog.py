@@ -13,7 +13,7 @@ STEPS = (
     ("1", "Open the game", "Idle Mafia in the Roblox desktop player — not Firefox. Minimize Firefox. Close the Roblox overlay (top-left logo). Leave the game in front."),
     ("2", "Scan Tabs", "Opens Jobs, Family, Shop, and Bank. Reads gold DO JOB, GIVE 1 / GIVE 5, gold BUY, and DEPOSIT ALL so it knows where to click. Fills Targets. Those buttons are not pressed during the scan."),
     ("3", "Tick what you want", "Working tabs are Jobs, Family, Shop, and Bank. Tick jobs and perks. Shop with none ticked buys every gold BUY cash covers on ALL. Tick DEPOSIT ALL to bank leftover cash after Shop."),
-    ("4", "Start", "This window hides. The Live HUD stays so you can watch. Gold DO JOB, GIVE, gold BUY, and DEPOSIT ALL are pressed. Grey and LEVEL lock are never pressed. F3 stops everything."),
+    ("4", "Start", "This window hides. A small box stays in the corner. Idle Mafia stays in front so you can see it. Gold DO JOB, GIVE, gold BUY, and DEPOSIT ALL are pressed. Grey and LEVEL lock are never pressed. F3 on the keyboard stops everything — change that key in Settings if you want."),
 )
 
 KEYS = (

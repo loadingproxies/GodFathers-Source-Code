@@ -339,12 +339,10 @@ class ClickMap:
             )
             if on_header or on_perks_tab:
                 if key in {"scroll_perks", "scroll_family"}:
-                    x = int(width * 0.72)
-                elif key == "scroll_jobs":
-                    x = int(width * 0.58)
+                    x = int(width * 0.40)
                 else:
-                    x = int(width * 0.55)
-                y = int(height * 0.52)
+                    x = int(width * 0.30)
+                y = int(height * 0.42)
         return int(info.left) + x, int(info.top) + y
 
     def tab_point(self, name: str, info) -> tuple[int, int] | None:

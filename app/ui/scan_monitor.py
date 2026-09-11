@@ -4,9 +4,10 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
+from app.core.hotkey import normalize_stop_key
 from app.core.input import hud_home_pos, register_click_overlay, set_overlays_click_through, unregister_click_overlay
 from app.core.window_manager import exclude_from_capture
 from app.ui.brand import apply_app_icon
@@ -21,23 +22,24 @@ class ScanMonitor(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(None, Qt.Window | Qt.WindowStaysOnTopHint)
+        self._stop_key = "F3"
         self.setWindowTitle("Live HUD  ·  F2 hide  ·  F3 stop")
         self.setStyleSheet(APP_STYLESHEET)
         apply_app_icon(self)
         self._last_pixmap: QPixmap | None = None
+        width, height = 380, 268
         screen = QApplication.primaryScreen()
         if screen is not None:
             area = screen.availableGeometry()
-            width = max(640, min(880, int(area.width() * 0.42)))
-            height = max(560, min(820, int(area.height() * 0.72)))
             self.resize(width, height)
             self.move(*hud_home_pos(area.left(), area.top(), area.right(), area.bottom(), width, height))
         else:
-            self.resize(720, 640)
-        self.setMinimumSize(520, 440)
+            self.resize(width, height)
+        self.setMinimumSize(320, 220)
+        self.setMaximumWidth(460)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
 
         hero = QFrame()
         hero.setObjectName("hero")
@@ -46,7 +48,7 @@ class ScanMonitor(QWidget):
         hero_layout.setSpacing(2)
         self.status = QLabel("Idle")
         self.status.setObjectName("bigStatus")
-        self.detail = QLabel("Start opens this HUD so you can watch clicks and OCR.")
+        self.detail = QLabel("Small corner box. The game stays in front.")
         self.detail.setObjectName("muted")
         self.detail.setWordWrap(True)
         hero_layout.addWidget(self.status)
@@ -85,18 +87,12 @@ class ScanMonitor(QWidget):
         self.image = QLabel("Waiting for a live capture.")
         self.image.setObjectName("liveView")
         self.image.setAlignment(Qt.AlignCenter)
-        self.image.setMinimumHeight(280)
-        layout.addWidget(self.image, 2)
+        self.image.hide()
 
-        activity_title = QLabel("ACTIVITY")
-        activity_title.setObjectName("sectionLabel")
-        layout.addWidget(activity_title)
-        self.activity = QPlainTextEdit()
-        self.activity.setReadOnly(True)
-        self.activity.setObjectName("logView")
-        self.activity.setPlainText("Activity will appear here when you press Start or Scan Tabs.")
-        self.activity.setMinimumHeight(140)
-        layout.addWidget(self.activity, 2)
+        self.activity = QLabel("Press Start or Scan Tabs.")
+        self.activity.setObjectName("muted")
+        self.activity.setWordWrap(True)
+        layout.addWidget(self.activity)
 
         buttons = QHBoxLayout()
         self.scan_btn = QPushButton("Scan Tabs")
@@ -113,10 +109,10 @@ class ScanMonitor(QWidget):
         buttons.addWidget(self.stop_btn, 1)
         layout.addLayout(buttons)
 
-        hint = QLabel("Clicks pass through this HUD while it is running. F2 hides. F3 stops.")
-        hint.setObjectName("muted")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self.hint = QLabel("Game stays in front. Red Stop or F3 on the keyboard.")
+        self.hint.setObjectName("muted")
+        self.hint.setWordWrap(True)
+        layout.addWidget(self.hint)
         self.set_busy(False)
 
     def set_busy(self, busy: bool) -> None:
@@ -130,7 +126,14 @@ class ScanMonitor(QWidget):
         self.stop_btn.setEnabled(True)
         if not busy and self.status.text() in {"Mapping", "Scanning", "Doing jobs"}:
             self.status.setText("Idle")
-        set_overlays_click_through(running and not paused and not mapping)
+        set_overlays_click_through(False)
+
+    def set_stop_key(self, name: str) -> None:
+        key = normalize_stop_key(name)
+        self._stop_key = key
+        self.setWindowTitle(f"Live HUD  ·  F2 hide  ·  {key} stop")
+        self.stop_btn.setText(f"Stop  ({key})")
+        self.hint.setText(f"Game stays in front. Red Stop or {key} on the keyboard.")
 
     def set_status(self, title: str, detail: str = "") -> None:
         self.status.setText(title)
@@ -145,21 +148,14 @@ class ScanMonitor(QWidget):
         body = (text or "").strip()
         if not body or body.startswith("No activity"):
             return
-        self.activity.setPlainText(body)
-        bar = self.activity.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        line = body.splitlines()[-1].strip()
+        if line:
+            self.activity.setText(line)
 
     def append_activity(self, line: str) -> None:
-        text = self.activity.toPlainText().strip()
-        if text.startswith("Activity will appear") or text.startswith("No activity"):
-            self.activity.setPlainText(line)
-        else:
-            self.activity.appendPlainText(line)
-        lines = self.activity.toPlainText().splitlines()
-        if len(lines) > 120:
-            self.activity.setPlainText("\n".join(lines[-120:]))
-        bar = self.activity.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        text = (line or "").strip()
+        if text:
+            self.activity.setText(text)
 
     def show_frame(self, frame, title: str = "") -> None:
         readings = []
@@ -171,7 +167,7 @@ class ScanMonitor(QWidget):
             self.status.setText(title)
             low = title.lower()
             if "idle mafia" in low or low.strip() == "roblox":
-                self.detail.setText("Live view of Idle Mafia.")
+                self.detail.setText("Idle Mafia is in front.")
             else:
                 self.detail.setText("This is NOT Idle Mafia. Open the game — clicks are blocked.")
         pixmap = _annotate_live(frame, readings, title)
@@ -203,6 +199,7 @@ class ScanMonitor(QWidget):
 
     def closeEvent(self, event):
         event.ignore()
+        self.stop_all.emit()
         self.hide()
 
 

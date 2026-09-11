@@ -242,6 +242,8 @@ class OCRWorker(QThread):
             self.capture_status.emit("Idle")
 
     def _scan_once(self) -> None:
+        if self._stop:
+            return
         self.scan_started.emit()
         self.activity.emit("OCR scan started")
         self._tick += 1

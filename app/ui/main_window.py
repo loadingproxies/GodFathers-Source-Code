@@ -15,7 +15,7 @@ from app.core.hud import hydrate_state_from_map
 from app.core.jobs import format_job_stats
 from app.core.shop import format_shop_stats
 from app.core.logger import get_logger
-from app.core.hotkey import GlobalHotkey
+from app.core.hotkey import GlobalHotkey, normalize_stop_key
 from app.core.ocr_engine import ocr_available
 from app.core.ocr_worker import OCRWorker
 from app.core.playbook import Playbook
@@ -150,13 +150,14 @@ class MainWindow(QMainWindow):
         shortcut = QShortcut(QKeySequence("F2"), self)
         shortcut.setContext(Qt.ApplicationShortcut)
         shortcut.activated.connect(self.toggle_scan_monitor)
-        stop_shortcut = QShortcut(QKeySequence("F3"), self)
-        stop_shortcut.setContext(Qt.ApplicationShortcut)
-        stop_shortcut.activated.connect(self.emergency_stop)
+        self.stop_shortcut = QShortcut(QKeySequence("F3"), self)
+        self.stop_shortcut.setContext(Qt.ApplicationShortcut)
+        self.stop_shortcut.activated.connect(self.emergency_stop)
         self.hotkey.pressed.connect(self.toggle_scan_monitor)
         self.hotkey.stop_pressed.connect(self.emergency_stop)
         self.hotkey.register(0)
-        self.logger.log("GodFathers OCR ready  •  Scan Tabs  •  F2 Live HUD  •  F3 Stop")
+        self._apply_stop_hotkey()
+        self.logger.log(f"GodFathers OCR ready  •  Scan Tabs  •  F2 Live HUD  •  {self._stop_key()} Stop")
         QTimer.singleShot(400, self._maybe_first_guide)
 
     def build_ui(self):
@@ -403,6 +404,9 @@ class MainWindow(QMainWindow):
 
     def start(self):
         if self.worker and self.worker.isRunning() and self.paused:
+            from app.core.input import set_clicks_halted
+
+            set_clicks_halted(False)
             self.worker.request_resume()
             self.paused = False
             self.running = True
@@ -418,8 +422,8 @@ class MainWindow(QMainWindow):
             self.paused = True
             self.start_btn.setText("Resume")
             self.status.setText("Paused")
-            self.status_detail.setText("Paused  •  clicks halted  •  F3 also stops")
-            self.logger.log("Paused — job clicks halted. F3 also emergency-stops.")
+            self.status_detail.setText(f"Paused  •  clicks halted  •  {self._stop_key()} also stops")
+            self.logger.log(f"Paused — job clicks halted. {self._stop_key()} also emergency-stops.")
             if self.monitor:
                 self.monitor.set_mode(running=True, paused=True)
                 self.monitor.set_status("Paused", "Clicks halted. Resume from Start or this HUD.")
@@ -430,7 +434,10 @@ class MainWindow(QMainWindow):
             alerts.info(self, "GodFathers OCR", error)
             return
 
+        from app.core.input import set_clicks_halted
+
         self.windows.ensure_game()
+        set_clicks_halted(False)
 
         self._reset_state_labels()
         self.worker = OCRWorker(self.settings, self.rois, self.windows, self, playbook=self.playbook)
@@ -508,8 +515,8 @@ class MainWindow(QMainWindow):
         self.explorer.start()
         self.status.setText("Mapping")
         self.status_detail.setText("Walking Jobs and Family")
-        self._open_live_hud()
-        self.logger.log("Tab scan started  •  F2 toggles Live HUD")
+        self._yield_to_game()
+        self.logger.log(f"Tab scan started  •  F2 toggles Live HUD  •  {self._stop_key()} stops")
 
     def stop_tab_scan(self):
         if self.explorer is None:
@@ -520,25 +527,38 @@ class MainWindow(QMainWindow):
             self.monitor.set_status("Stopping", "Finishing the current tab, then stopping.")
 
     def emergency_stop(self) -> None:
+        from app.core.input import set_clicks_halted
+
         now = time.time()
         if now - self._f3_at < 0.35:
             return
         self._f3_at = now
-        self.logger.log("F3 — stopping clicks and scan now")
+        set_clicks_halted(True)
+        self.logger.log(f"{self._stop_key()} — stopping clicks and scan now")
         self.stop()
 
     def stop(self):
+        from app.core.input import set_clicks_halted
+        from PySide6.QtWidgets import QApplication
+
+        set_clicks_halted(True)
         self.stop_tab_scan()
         if self.explorer:
             self.explorer.request_stop()
-            self.explorer.wait(1500)
+            deadline = time.time() + 0.8
+            while self.explorer.isRunning() and time.time() < deadline:
+                QApplication.processEvents()
+                self.explorer.wait(40)
             self.explorer = None
         if self.monitor:
             self.monitor.set_busy(False)
             self.monitor.set_status("Stopped", "Clicks halted. Start again from the main window or this HUD.")
         if self.worker:
             self.worker.request_stop()
-            self.worker.wait(4000)
+            deadline = time.time() + 1.2
+            while self.worker.isRunning() and time.time() < deadline:
+                QApplication.processEvents()
+                self.worker.wait(40)
             if self.worker.isRunning():
                 self.logger.log("Worker still winding down — clicks are already halted")
             self.worker = None
@@ -546,7 +566,7 @@ class MainWindow(QMainWindow):
         self.paused = False
         self.start_btn.setText("Start")
         self.status.setText("Waiting")
-        self.status_detail.setText("Stopped  •  F3 emergency stop")
+        self.status_detail.setText(f"Stopped  •  {self._stop_key()} emergency stop")
         self._set_connection_off("●  Stopped")
         self.ocr_last_label.setText("Last scan: —")
         self.logger.log("Stopped - capture released")
@@ -572,6 +592,7 @@ class MainWindow(QMainWindow):
             self.windows.select(title=self.settings.selected_window_title)
         self._refresh_demo_badge()
         self._refresh_connection_label()
+        self._apply_stop_hotkey()
         if dialog._open_calibrator:
             self.open_calibrator()
         if dialog._open_preview:
@@ -956,13 +977,37 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             self.start()
 
-    def _enter_run_view(self) -> None:
+    def _stop_key(self) -> str:
+        return normalize_stop_key(getattr(self.settings, "stop_hotkey", "F3"))
+
+    def _apply_stop_hotkey(self) -> None:
+        key = self._stop_key()
+        self.hotkey.set_stop_key(key)
+        self.stop_shortcut.setKey(QKeySequence(key))
+        self.halt_btn.setText(key)
+        self.halt_btn.setToolTip(f"{key} stops all clicks")
+        if self.monitor:
+            self.monitor.set_stop_key(key)
+
+    def _bring_game_forward(self) -> None:
+        from app.core.input import focus_window
+
+        info = self.windows.ensure_game() or self.windows.current()
+        hwnd = getattr(info, "hwnd", None)
+        if hwnd:
+            focus_window(int(hwnd), retries=3)
+
+    def _yield_to_game(self) -> None:
         if self.preview and self.preview.isVisible():
             self.preview.hide()
         if self.logs and self.logs.isVisible():
             self.logs.hide()
-        self._open_live_hud()
         self.hide()
+        self._bring_game_forward()
+        self._open_live_hud()
+
+    def _enter_run_view(self) -> None:
+        self._yield_to_game()
 
     def _restore_main_view(self) -> None:
         if self.monitor:
@@ -975,6 +1020,7 @@ class MainWindow(QMainWindow):
         hud = self._ensure_monitor()
         mapping = bool(self.explorer and self.explorer.isRunning())
         hud.set_mode(running=self.running, paused=self.paused, mapping=mapping)
+        hud.set_stop_key(self._stop_key())
         hud.set_status(self.status.text(), self.status_detail.text())
         if self.last_state:
             hud.set_state(self.last_state.ui_values())
@@ -1001,6 +1047,8 @@ class MainWindow(QMainWindow):
         self.logger.log(message)
         self.status.setText("Waiting")
         self.status_detail.setText("Tab scan stopped")
+        if not self.running:
+            self._restore_main_view()
         if self.monitor:
             self.monitor.set_mode(running=self.running, paused=self.paused)
             self.monitor.set_status("Stopped", message)
@@ -1016,6 +1064,8 @@ class MainWindow(QMainWindow):
         self._hydrate_hud()
         count = len(self.playbook.jobs)
         perks = len(self.playbook.perks)
+        if not self.running:
+            self._restore_main_view()
         if self.monitor:
             self.monitor.set_mode(running=self.running, paused=self.paused)
             self.monitor.set_status("Finished", f"{count} jobs and {perks} perks are in Targets.")
@@ -1120,8 +1170,8 @@ def _place_on_screen(widget) -> None:
     if screen is None or widget is None:
         return
     area = screen.availableGeometry()
-    width = max(widget.width(), 520)
-    height = max(widget.height(), 440)
+    width = max(widget.width(), 320)
+    height = max(widget.height(), 200)
     x = widget.x()
     y = widget.y()
     if x < area.left() - 80 or x > area.right() - 80 or y < area.top() - 80 or y > area.bottom() - 80:

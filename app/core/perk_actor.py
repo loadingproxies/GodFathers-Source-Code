@@ -414,11 +414,11 @@ class PerkActor:
         if not focus_window(info.hwnd):
             return
         taught = ClickMap.load().screen_point("scroll_perks", info)
-        content_x = info.left + int(info.width * 0.62)
+        content_x = info.left + int(info.width * 0.40)
         if taught is not None:
             content_y = taught[1]
         else:
-            content_y = info.top + int(info.height * 0.55)
+            content_y = info.top + int(info.height * 0.42)
         names = [getattr(item, "name", "") for item in (wanted or [])]
         go_up = any(give_is_above(name, visible or []) for name in names)
         if go_up and self._went_top:
